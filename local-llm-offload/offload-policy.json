@@ -1,0 +1,43 @@
+{
+  "_comment": "Policy YOU (the human) own. The ORCHESTRATOR (the cloud Claude session that spawned the local-offload subagent) reads this to decide how to fulfill the agent's capability-requests. The offload agent does NOT hold write/web tools, so it cannot perform these itself and cannot edit this file to widen its own privileges. Decisions: allow | ask | deny.",
+  "version": 1,
+  "capabilities": {
+    "write": {
+      "decision": "ask",
+      "auto_allow_under": ["sandbox/"],
+      "deny_paths": [
+        ".claude/",
+        ".git/",
+        "offload-policy.json",
+        "aichat-config/",
+        "run-local.sh",
+        "install.sh"
+      ],
+      "_note": "Writes under sandbox/ are auto-approved. Anywhere else: the orchestrator asks you (y/N) before writing. deny_paths are NEVER written on the agent's behalf — they protect the gate's own guardrails."
+    },
+    "web_search": {
+      "decision": "orchestrator",
+      "fetch_urls": false,
+      "exfil_guard": {
+        "_note": "The QUERY STRING is the exfiltration channel (the model could fold a secret it read into the query). The orchestrator screens every query before running it.",
+        "refuse_if_query_looks_like": [
+          "file contents, secrets, tokens, API keys, or env values",
+          "long opaque / base64 / hex blobs (> ~40 chars) rather than a question",
+          "data being smuggled out rather than a genuine information need"
+        ],
+        "on_suspicion": "downgrade to ask (human y/N) or deny"
+      },
+      "_note": "Search-only, GATED. The local model emits capability-request{web_search, query}; the ORCHESTRATOR (cloud Claude) screens the query for exfiltration, runs it with its OWN WebSearch tool, and returns snippets via capability-result. The local model never searches directly and never fetches arbitrary URLs."
+    },
+    "web_fetch": {
+      "decision": "deny",
+      "_note": "DEFERRED. Arbitrary-URL fetch is the strongest exfiltration + SSRF channel. Stays denied until a domain allowlist + SSRF/private-IP guard exist. 'Search only' was chosen; do not hand-fulfill a fetch."
+    },
+    "bash": {
+      "decision": "deny",
+      "_note": "The local model has only read-only fs tools (aichat-config: fs_ls, fs_cat). Do not grant shell on its behalf."
+    }
+  },
+  "audit_log": "offload-requests.log",
+  "missing_policy_default": "ask"
+}

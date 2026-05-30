@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# pre-commit — gate every commit on the offload-agent invariant suite.
+#
+# Runs the STATIC/security portion of test-suite.sh (--no-live) so commits
+# never depend on the local mlx_lm server being up. If any invariant fails
+# (worker gained a tool, policy weakened, gate config left writable, etc.)
+# the commit is blocked.
+#
+# This hook is tracked in-repo under hooks/ and activated via
+#   git config core.hooksPath hooks
+# (done by install.sh). Bypass in a pinch with:  git commit --no-verify
+#
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SUITE="$REPO_ROOT/test-suite.sh"
+
+[[ -x "$SUITE" ]] || { echo "pre-commit: test-suite.sh missing or not executable at $SUITE" >&2; exit 1; }
+
+echo "pre-commit: running offload-agent invariant suite (--no-live)…"
+if "$SUITE" --no-live; then
+  exit 0
+else
+  echo >&2
+  echo "pre-commit: BLOCKED — invariant suite failed. Fix the above, or bypass with 'git commit --no-verify'." >&2
+  exit 1
+fi

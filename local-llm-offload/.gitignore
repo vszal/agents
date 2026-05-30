@@ -1,0 +1,7 @@
+.claude/
+aichat-setup.sh
+*-workspace
+
+# Machine-specific symlink to the local llm-functions toolset (absolute path);
+# recreate per README / aichat-setup.sh. Not committed.
+aichat-config/functions

@@ -1,0 +1,28 @@
+# Isolated aichat config for Claude -> local-LLM offload (run-local.sh).
+# Kept SEPARATE from your interactive ~/Library/.../aichat/config.yaml so that
+# offloaded, NON-INTERACTIVE calls expose ONLY read-only filesystem tools.
+# (The approval guards skip prompting when there's no TTY, so write/delete
+#  tools must never be enabled here.)
+#
+# Local only: talks to mlx_lm.server on :8081. No cloud client on purpose.
+
+model: mlx:mlx-community/Qwen3-14B-4bit
+stream: false
+save: false
+function_calling: true
+use_tools: fs_ls,fs_cat          # read-only; never fs_write / fs_rm / fs_patch
+
+# The `models:` list below is GENERATED from the live server by sync-models.sh.
+# Don't hand-edit it — run ./sync-models.sh after the served model set changes.
+clients:
+- type: openai-compatible
+  name: mlx
+  api_base: http://localhost:8081/v1
+  api_key: dummy
+  models:
+  - name: mlx-community/Qwen3-0.6B-4bit
+    max_output_tokens: 8192
+  - name: mlx-community/Qwen3-14B-4bit
+    max_output_tokens: 8192
+  - name: mlx-community/Qwen3-8B-4bit
+    max_output_tokens: 8192
