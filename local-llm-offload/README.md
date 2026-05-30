@@ -14,8 +14,47 @@ the local model via `aichat`.
 | `aichat-config/config.yaml` | Local-only client; **read-only** tools (`fs_ls`, `fs_cat`). |
 | `aichat-config/functions` | Symlink → `~/llm-functions` (the built tool set). |
 | `install.sh`              | Installs the agent into `~/.claude/agents` (or `--project`); also activates the git pre-commit hook. |
+| `mlx-server.sh`           | Sample launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). |
+| `sync-models.sh`          | Rewrites the `models:` block in `aichat-config/config.yaml` from the live server. |
 | `test-suite.sh`           | E2E / invariant tests that verify the gate is intact (see **Testing**). |
 | `hooks/pre-commit`        | Tracked git hook that runs the suite (`--no-live`) on every commit. |
+
+## Prerequisites & first-time setup
+You need three things on your machine; the agent itself ships here.
+
+1. **A local model server on `:8081`** (OpenAI-compatible). On Apple Silicon:
+   ```bash
+   pip install mlx-lm
+   ./mlx-server.sh                 # serves mlx-community/Qwen3-14B-4bit on :8081
+   ```
+   On other hardware, run any OpenAI-compatible server on `:8081` instead
+   (llama.cpp's `llama-server`, vLLM, Ollama's OpenAI endpoint, …).
+
+2. **`aichat`** — the client the wrapper drives: <https://github.com/sigoden/aichat>.
+
+3. **The `fs_*` tool set** (`fs_ls`, `fs_cat`) built via `llm-functions`. These
+   are the only tools the local model gets, and they're **read-only**:
+   ```bash
+   git clone --depth 1 https://github.com/sigoden/llm-functions.git ~/llm-functions
+   cd ~/llm-functions
+   printf '%s\n' fs_ls.sh fs_cat.sh > tools.txt   # read-only tools only
+   argc build                                     # generates functions.json + bin/
+   ```
+   Then point this repo's isolated config at that tool set (the symlink is
+   git-ignored because it's an absolute local path):
+   ```bash
+   ln -s ~/llm-functions <repo>/local-llm-offload/aichat-config/functions
+   ```
+   > Do **not** add `fs_write`/`fs_rm`/`fs_patch` here. In non-interactive
+   > (agent) calls aichat's approval prompt is skipped, so any mutating tool
+   > would run unguarded. Writes go through the orchestrator instead — see
+   > `ORCHESTRATION.md` and `offload-policy.json`.
+
+Once the server is up:
+```bash
+./sync-models.sh    # write the served models into aichat-config/config.yaml
+./run-local.sh -l   # sanity-check: list models the server reports
+```
 
 ## Install
 ```bash
@@ -54,7 +93,7 @@ on the local server being up. Bypass in a pinch with `git commit --no-verify`.
 ## Use the wrapper standalone
 ```bash
 ./run-local.sh "Draft a conventional-commit message for: add tilde expansion to fs tools"
-./run-local.sh -m mlx:mlx-community/Qwen3-8B-4bit "Explain this code" -f ../mlx-server.sh
+./run-local.sh -m mlx:mlx-community/Qwen3-8B-4bit "Explain this code" -f ./mlx-server.sh
 ./run-local.sh -l            # list models served on :8081 right now
 echo "summarize" | ./run-local.sh
 ```
@@ -78,5 +117,6 @@ echo "summarize" | ./run-local.sh
 - Change the default model: edit `model:` in `aichat-config/config.yaml` or pass
   `-m` to the wrapper.
 - Add tools: they must be read-only and listed in `use_tools:`; build them in
-  `~/llm-functions` (`argc build`).
-- Requires `mlx_lm.server` running on `:8081` (see `../mlx-server.sh`).
+  `~/llm-functions` (`argc build`). See **Prerequisites & first-time setup**.
+- Requires a model server on `:8081` (see `./mlx-server.sh` and
+  **Prerequisites & first-time setup**).

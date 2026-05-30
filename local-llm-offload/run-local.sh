@@ -37,7 +37,7 @@ check_server() {
     {
       echo "error: local LLM server not reachable at $SERVER"
       echo "The mlx_lm server appears to be down. Start it with, e.g.:"
-      echo "    $SCRIPT_DIR/../mlx-server.sh"
+      echo "    $SCRIPT_DIR/mlx-server.sh"
       echo "then retry."
     } >&2
     exit 3

@@ -37,4 +37,4 @@ echo "Runner          -> $RUNNER"
 echo
 echo "Use it in Claude Code:  ask Claude to 'offload this to the local model',"
 echo "or invoke directly with the @local-offload subagent."
-echo "Ensure mlx_lm.server is running on :8081 (see ../mlx-server.sh)."
+echo "Ensure mlx_lm.server is running on :8081 (see ./mlx-server.sh)."
