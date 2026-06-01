@@ -10,6 +10,9 @@
 # Options:
 #   -m, --model MODEL   aichat model id (default: the model the server is serving)
 #   -f, --file  FILE    Include a file/dir/URL as context (repeatable)
+#   -s, --stream        Stream tokens to stdout as generated (default: buffered).
+#                       Use to peek at incremental output of slow runs; pairs with
+#                       stdbuf -oL so a redirected file grows in near-real-time.
 #   -l, --list          List local models currently loaded on :8081 and exit
 #   -h, --help          Show this help
 #
@@ -20,13 +23,16 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve through symlinks so $SCRIPT_DIR is the real source dir (and thus
+# aichat-config/) even when invoked via a ~/.local/bin symlink.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export AICHAT_CONFIG_DIR="$SCRIPT_DIR/aichat-config"
 
 SERVER="http://localhost:8081"
 MODEL=""   # empty => auto-resolve from the live server (see resolve_default_model)
 FILES=()
 PROMPT=""
+STREAM=0   # 0 => --no-stream (buffered); 1 => stream tokens to stdout as they arrive
 
 # Print the leading header comment block (skip shebang, stop at first code line).
 print_help() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0"; }
@@ -62,6 +68,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -m|--model) MODEL="$2"; shift 2 ;;
     -f|--file)  FILES+=("$2"); shift 2 ;;
+    -s|--stream) STREAM=1; shift ;;
     -l|--list)  check_server; curl -s "$SERVER/v1/models" | jq -r '.data[].id'; exit 0 ;;
     -h|--help)  print_help; exit 0 ;;
     --)         shift; PROMPT="$*"; break ;;
@@ -83,8 +90,17 @@ check_server
 
 [[ -n "$MODEL" ]] || MODEL="$(resolve_default_model)"
 
-args=(--no-stream --model "$MODEL")
+if [[ "$STREAM" -eq 1 ]]; then
+  args=(--model "$MODEL")           # stream tokens; aichat streams by default
+else
+  args=(--no-stream --model "$MODEL")
+fi
 for f in "${FILES[@]:-}"; do [[ -n "$f" ]] && args+=(--file "$f"); done
 args+=("$PROMPT")
 
+# In streaming mode, force line-buffered stdout (via stdbuf if present) so a
+# redirected file grows in near-real-time instead of in big libc-buffered chunks.
+if [[ "$STREAM" -eq 1 ]] && command -v stdbuf >/dev/null 2>&1; then
+  exec stdbuf -oL aichat "${args[@]}"
+fi
 exec aichat "${args[@]}"
