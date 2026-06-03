@@ -3,13 +3,14 @@
 Lets the cloud Claude session hand **self-contained, lower-priority tasks** to
 your on-device LLM (served by `mlx_lm.server` on `:8081`) to save tokens/cost.
 The subagent's orchestrator runs on cheap **Haiku**; the actual work is done by
-the local model via `aichat`.
+the local model via one of two clients — see **Two client paths** below.
 
 ## Files
 | File | Purpose |
 |------|---------|
 | `local-offload.md`        | The Claude Code subagent definition (source; `__RUNNER__` is filled in at install). |
-| `run-local.sh`            | Wrapper that sends a prompt to a local model via `aichat`. Also usable by hand. |
+| `post-local.py`           | **Simplified** direct-HTTP client (no `aichat`, no tools). Default for text-only tasks + all eval generation. |
+| `run-local.sh`            | Wrapper that sends a prompt to a local model via `aichat` (the **tool-calling** path). Also usable by hand. |
 | `aichat-config/`          | Isolated `aichat` config used only by the wrapper. |
 | `aichat-config/config.yaml` | Local-only client; **read-only** tools (`fs_ls`, `fs_cat`). |
 | `aichat-config/functions` | Symlink → `~/llm-functions` (the built tool set). |
@@ -89,6 +90,23 @@ every commit and blocks it if any invariant fails, so a weakened gate can't be
 committed. It's tracked in-repo and activated by `install.sh` (or manually:
 `git config core.hooksPath hooks`). It skips live tests so commits never depend
 on the local server being up. Bypass in a pinch with `git commit --no-verify`.
+
+## Two client paths
+Pick the client by whether the local model needs **tools / function calling**:
+
+| Client | Deps | Tools? | Use for |
+|--------|------|--------|---------|
+| **`post-local.py`** | mlx-lm + Python stdlib only | none | **The default — fully self-contained.** Text-only, self-contained prompts: drafting, summarizing, eval generation. Plain HTTP to `:8081`; no `function_calling`, so no tool-call aborts, and it rides the server's prompt-cache prefix reuse (a shared leading prefix is prefilled once, then near-free). |
+| **`run-local.sh`** (aichat) | `aichat` + `llm-functions` tool build | `fs_ls`/`fs_cat` (read-only) | **Only when the local model needs tools** — i.e. it must read files itself mid-task (agentic file lookup), via `aichat`'s isolated config. |
+
+**Rule of thumb: use `post-local.py` unless you need tool/function calling.**
+The simple path depends on nothing but the mlx-lm server you already run — no
+`aichat` install, no `llm-functions`/`argc` tool build, no separate client
+config. Only reach for `run-local.sh` when the local model genuinely needs the
+`fs_*` tools; Qwen models in particular reflex to emit `fs_ls` calls that abort a
+tools-enabled run with empty output, which is the other reason the no-tools path
+is the default. Both clients take the same core flags (`-m`, `-f`, `-l`) and
+talk only to `:8081`; the eval tooling (`run-eval-*.sh`) uses `post-local.py`.
 
 ## Use the wrapper standalone
 ```bash
