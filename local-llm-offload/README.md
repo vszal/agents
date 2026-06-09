@@ -15,7 +15,7 @@ the local model via one of two clients — see **Two client paths** below.
 | `aichat-config/config.yaml` | Local-only client; **read-only** tools (`fs_ls`, `fs_cat`). |
 | `aichat-config/functions` | Symlink → `~/llm-functions` (the built tool set). |
 | `install.sh`              | Installs the agent into `~/.claude/agents` (or `--project`); also activates the git pre-commit hook. |
-| `mlx-server.sh`           | Sample launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). |
+| `mlx-server.sh`           | **Canonical** launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). Symlinked as `~/.local/bin/mlx-server.sh`; also used by the skill-eval scripts. Aliases incl. `gemma12` (default). |
 | `sync-models.sh`          | Rewrites the `models:` block in `aichat-config/config.yaml` from the live server. |
 | `test-suite.sh`           | E2E / invariant tests that verify the gate is intact (see **Testing**). |
 | `hooks/pre-commit`        | Tracked git hook that runs the suite (`--no-live`) on every commit. |
