@@ -104,7 +104,11 @@ def main():
                 sys.stdout.write("\n")
         else:
             with urllib.request.urlopen(req, timeout=600) as r:
-                print(json.load(r)["choices"][0]["message"]["content"])
+                msg = json.load(r)["choices"][0]["message"]
+                # reasoning models (e.g. gemma-4) put the answer in content, but if
+                # thinking wasn't disabled they may emit only `reasoning` — fall back to
+                # it rather than KeyError-ing on a missing content key.
+                print(msg.get("content") or msg.get("reasoning") or "")
     except urllib.error.URLError as e:
         die(f"error: request to {SERVER} failed: {e}", 3)
 
