@@ -20,9 +20,15 @@ clients:
   api_base: http://localhost:8081/v1
   api_key: dummy
   models:
+  - name: mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit
+    max_output_tokens: 8192
+  - name: mlx-community/Qwen2.5-Coder-14B-Instruct-4bit
+    max_output_tokens: 8192
   - name: mlx-community/Qwen3-0.6B-4bit
     max_output_tokens: 8192
   - name: mlx-community/Qwen3-14B-4bit
     max_output_tokens: 8192
-  - name: mlx-community/Qwen3-8B-4bit
+  - name: mlx-community/phi-4-4bit
+    max_output_tokens: 8192
+  - name: rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx
     max_output_tokens: 8192

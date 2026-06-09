@@ -70,9 +70,12 @@ pick from that. Prefix each with `mlx:` when passing to `-m`
 
 The notes below are only quality/speed guidance and MAY BE STALE — defer to `-l`
 for what actually exists:
-- Qwen3-14B-4bit — good general/coding default.
-- gemma-4-26B-A4B-it-MLX-4bit — strongest, heavier/slower.
-- Qwen3-8B-4bit — lighter/faster.
+- Qwen3-14B-4bit — good general/coding default; supports tool-calling, so it's the best fit
+  for this aichat (fs_ls/fs_cat) path.
+- Mistral-Small-3.2-24B — strongest general reasoning, heavier/slower.
+- phi-4-4bit — fast, non-Qwen lineage.
+- Qwen2.5-Coder-14B — code / structured output.
+- gemma-4-12b-it (text-only) — strong, but a reasoning model — may not tool-call cleanly via aichat.
 - Qwen3-0.6B-4bit — tiny; trivial tasks only.
 
 ## Procedure
