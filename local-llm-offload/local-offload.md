@@ -40,28 +40,36 @@ append this contract to every task prompt (adapt wording, keep intent):
   have the model return the command and its raw output.
 - Omit parts that don't apply (e.g. no commands for a pure rewrite/draft).
 
-## Requesting privileged actions (writes; web search)
-The local model is read-only: it cannot write files, search, or fetch the web — those
-tools do not exist for it, by design. When a task needs one, do NOT try to do it and do
-NOT silently skip it. Instead, have the model end its output with one fenced
-`capability-request` block per action, each with a unique `id`, and forward those blocks
-verbatim in your reply. The orchestrator (cloud Claude) applies `offload-policy.json` and
-fulfills, asks the human, or denies — then returns `capability-result` blocks.
+## Web access (DIRECT) and writes (still mediated)
+The local model now has its OWN guarded web tools — it searches and fetches directly,
+you do NOT mediate those:
+- **`web_search`** (Tavily) — needs `TAVILY_API_KEY` in the environment. The model calls
+  it itself for current information.
+- **`web_fetch`** — fetches ONE page, but only if the host is on
+  `tools/fetch-allowlist.txt` and resolves to a public IP; private/loopback/redirect
+  targets are refused (`tools/url_guard.py`). If a task needs a host that isn't on the
+  list, tell the user to add it — don't try to route around the guard.
+
+The model's file READS are confined by `sandbox-exec` to the per-task paths only (the
+`-f` files and any `--read-root` dirs), so a web-capable model can't read ambient files
+to exfiltrate them. Keep task prompts free of secrets (the prompt is the other channel).
+
+**Writes are still mediated** — the worker has no write/bash tool. When a task needs to
+write a file, have the model end its output with a fenced `capability-request` block
+(unique `id`) and forward it verbatim. The orchestrator (cloud Claude) applies
+`offload-policy.json` and fulfills, asks the human, or denies — then returns a
+`capability-result` block.
 
 ```capability-request
 { "id": "r1", "capability": "write", "path": "sandbox/summary.md", "content": "...full file body..." }
-{ "id": "s1", "capability": "web_search", "query": "concise search query — a real question, not data" }
 ```
 
 Rules to pass to the model:
 - Put write paths under `sandbox/` when possible — those are auto-approved; other paths
-  require human approval.
-- `content` must be the COMPLETE intended file body; the orchestrator writes it verbatim.
-- `web_search` is fulfilled BY the orchestrator (it runs the search and returns snippets) —
-  so `query` must be a genuine, concise information need. Never put file contents, secrets,
-  tokens, or long opaque blobs in a query; such queries get refused as exfiltration.
-- `web_fetch` (fetching a specific URL) is denied by policy — don't request it.
-- Do all read-only / local-LLM work first; only request what genuinely needs a privileged tool.
+  require human approval. `content` must be the COMPLETE file body; it's written verbatim.
+- Use `web_search`/`web_fetch` directly for information needs; don't request them as
+  capabilities (that protocol is for writes now).
+- Do all read-only / local-LLM work first; only request a WRITE when genuinely needed.
 
 ## Model selection (all served locally on :8081)
 Run `__RUNNER__ -l` to get the authoritative list of models served RIGHT NOW;

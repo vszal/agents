@@ -1,8 +1,15 @@
 # Isolated aichat config for Claude -> local-LLM offload (run-local.sh).
-# Kept SEPARATE from your interactive ~/Library/.../aichat/config.yaml so that
-# offloaded, NON-INTERACTIVE calls expose ONLY read-only filesystem tools.
-# (The approval guards skip prompting when there's no TTY, so write/delete
-#  tools must never be enabled here.)
+# Kept SEPARATE from your interactive ~/Library/.../aichat/config.yaml.
+#
+# Tools exposed to the on-device model (all NON-mutating):
+#   * fs_ls, fs_cat       — read-only filesystem (never fs_write/fs_rm/fs_patch).
+#   * web_search_tavily   — web search (needs TAVILY_API_KEY in the environment).
+#   * web_fetch           — fetch ONE allowlisted URL; SSRF/private-IP guarded
+#                           (see ../tools/web_fetch.sh + ../tools/url_guard.py).
+# File-DATA reads are additionally confined to the per-task paths by sandbox-exec
+# in run-local.sh, so a web-capable model cannot read ambient files and exfil
+# them. Do NOT add fetch_url_via_curl/jina here — those are UNguarded arbitrary
+# fetch. Web egress is bounded by ../tools/fetch-allowlist.txt.
 #
 # Local only: talks to mlx_lm.server on :8081. No cloud client on purpose.
 
@@ -10,7 +17,7 @@ model: mlx:mlx-community/Qwen3-14B-4bit
 stream: false
 save: false
 function_calling: true
-use_tools: fs_ls,fs_cat          # read-only; never fs_write / fs_rm / fs_patch
+use_tools: fs_ls,fs_cat,web_search_tavily,web_fetch   # read-only fs + guarded web; never fs_write/fs_rm/fs_patch or unguarded fetch_url_*
 
 # The `models:` list below is GENERATED from the live server by sync-models.sh.
 # Don't hand-edit it — run ./sync-models.sh after the served model set changes.

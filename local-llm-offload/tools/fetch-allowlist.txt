@@ -1,0 +1,19 @@
+# web_fetch egress allowlist — host SUFFIXES the on-device model may fetch.
+# One per line; `#` comments and blank lines ignored. A line "example.com"
+# matches example.com and any *.example.com, but NOT evilexample.com.
+# Override at runtime with the OFFLOAD_FETCH_ALLOWLIST env var.
+#
+# Keep this TIGHT. Every host here is a place the model can send a URL (and thus
+# any data it can fold into that URL). Private/loopback/link-local targets are
+# refused regardless of this list (see tools/url_guard.py). Add only public,
+# read-oriented documentation/reference hosts you trust.
+
+# --- docs / reference (safe, read-only public docs) ---
+docs.python.org
+developer.mozilla.org
+en.wikipedia.org
+pkg.go.dev
+docs.rs
+
+# --- examples used by the test suite (harmless) ---
+example.com

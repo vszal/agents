@@ -10,10 +10,14 @@ the local model via one of two clients — see **Two client paths** below.
 |------|---------|
 | `local-offload.md`        | The Claude Code subagent definition (source; `__RUNNER__` is filled in at install). |
 | `post-local.py`           | **Simplified** direct-HTTP client (no `aichat`, no tools). Default for text-only tasks + all eval generation. |
-| `run-local.sh`            | Wrapper that sends a prompt to a local model via `aichat` (the **tool-calling** path). Also usable by hand. |
+| `run-local.sh`            | Wrapper that sends a prompt to a local model via `aichat` (the **tool-calling** path), confining the model's file reads with `sandbox-exec`. Also usable by hand. |
 | `aichat-config/`          | Isolated `aichat` config used only by the wrapper. |
-| `aichat-config/config.yaml` | Local-only client; **read-only** tools (`fs_ls`, `fs_cat`). |
+| `aichat-config/config.yaml` | Local-only client; non-mutating tools (`fs_ls`, `fs_cat`, `web_search_tavily`, guarded `web_fetch`). |
 | `aichat-config/functions` | Symlink → `~/llm-functions` (the built tool set). |
+| `tools/url_guard.py`      | SSRF + allowlist guard for `web_fetch` (the security core; unit-tested). |
+| `tools/web_fetch.sh`      | Hardened single-URL fetch tool: allowlist + SSRF guard, pinned IP, no redirects. |
+| `tools/fetch-allowlist.txt` | Host suffixes the model may `web_fetch` (override with `OFFLOAD_FETCH_ALLOWLIST`). |
+| `tools/test-url-guard.sh` | Offline unit tests for the SSRF/allowlist guard. |
 | `install.sh`              | Installs the agent into `~/.claude/agents` (or `--project`); also activates the git pre-commit hook. |
 | `mlx-server.sh`           | **Canonical** launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). Symlinked as `~/.local/bin/mlx-server.sh`; also used by the skill-eval scripts. Aliases incl. `gemma12` (default). |
 | `sync-models.sh`          | Rewrites the `models:` block in `aichat-config/config.yaml` from the live server. |
@@ -33,12 +37,12 @@ You need three things on your machine; the agent itself ships here.
 
 2. **`aichat`** — the client the wrapper drives: <https://github.com/sigoden/aichat>.
 
-3. **The `fs_*` tool set** (`fs_ls`, `fs_cat`) built via `llm-functions`. These
-   are the only tools the local model gets, and they're **read-only**:
+3. **The tool set** built via `llm-functions`: read-only `fs_ls`/`fs_cat`, plus
+   the model's **guarded web tools** `web_search_tavily` and `web_fetch`:
    ```bash
    git clone --depth 1 https://github.com/sigoden/llm-functions.git ~/llm-functions
    cd ~/llm-functions
-   printf '%s\n' fs_ls.sh fs_cat.sh > tools.txt   # read-only tools only
+   printf '%s\n' fs_ls.sh fs_cat.sh web_search_tavily.sh web_fetch.sh > tools.txt
    argc build                                     # generates functions.json + bin/
    ```
    Then point this repo's isolated config at that tool set (the symlink is
@@ -46,10 +50,16 @@ You need three things on your machine; the agent itself ships here.
    ```bash
    ln -s ~/llm-functions <repo>/local-llm-offload/aichat-config/functions
    ```
-   > Do **not** add `fs_write`/`fs_rm`/`fs_patch` here. In non-interactive
-   > (agent) calls aichat's approval prompt is skipped, so any mutating tool
-   > would run unguarded. Writes go through the orchestrator instead — see
-   > `ORCHESTRATION.md` and `offload-policy.json`.
+   `install.sh` copies the **hardened** `web_fetch.sh` + `url_guard.py` into the
+   build for you and adds the two web tools to `tools.txt` (it won't remove
+   anything else you build there). For `web_search`, set `TAVILY_API_KEY` in your
+   environment.
+   > Do **not** add `fs_write`/`fs_rm`/`fs_patch` (mutating) or
+   > `fetch_url_via_curl`/`fetch_url_via_jina` (UNguarded arbitrary fetch) to the
+   > offload model. The isolated `use_tools:` line is what restricts the model to
+   > read-only fs + the *guarded* web tools; writes go through the orchestrator
+   > (see `ORCHESTRATION.md` + `offload-policy.json`), and `web_fetch` is allowed
+   > only via the allowlist/SSRF guard in `tools/`.
 
 Once the server is up:
 ```bash
@@ -97,7 +107,7 @@ Pick the client by whether the local model needs **tools / function calling**:
 | Client | Deps | Tools? | Use for |
 |--------|------|--------|---------|
 | **`post-local.py`** | mlx-lm + Python stdlib only | none | **The default — fully self-contained.** Text-only, self-contained prompts: drafting, summarizing, eval generation. Plain HTTP to `:8081`; no `function_calling`, so no tool-call aborts, and it rides the server's prompt-cache prefix reuse (a shared leading prefix is prefilled once, then near-free). |
-| **`run-local.sh`** (aichat) | `aichat` + `llm-functions` tool build | `fs_ls`/`fs_cat` (read-only) | **Only when the local model needs tools** — i.e. it must read files itself mid-task (agentic file lookup), via `aichat`'s isolated config. |
+| **`run-local.sh`** (aichat) | `aichat` + `llm-functions` tool build | `fs_ls`/`fs_cat` + guarded `web_search`/`web_fetch` | **When the local model needs tools** — read files itself mid-task, or search/fetch the web. Runs sandbox-confined via `aichat`'s isolated config. |
 
 **Rule of thumb: use `post-local.py` unless you need tool/function calling.**
 The simple path depends on nothing but the mlx-lm server you already run — no
@@ -119,10 +129,24 @@ echo "summarize" | ./run-local.sh
 ## Safety / design notes
 - **Local only.** The offload config has no cloud client — it cannot spend
   cloud tokens.
-- **Read-only tools.** Only `fs_ls`/`fs_cat` are exposed. The approval guards
-  in `llm-functions` skip prompting when there's no TTY (as in an agent call),
-  so write/delete tools are deliberately *not* enabled here. To give file
-  context, prefer `-f <path>`.
+- **Non-mutating tools.** The model gets `fs_ls`/`fs_cat` (read-only) plus
+  guarded web (`web_search_tavily`, `web_fetch`). Mutating fs tools and the
+  *unguarded* `fetch_url_via_*` tools are deliberately not enabled. Writes go
+  through the orchestrator (capability-request). To give file context, use `-f`.
+- **Reads are confined.** `run-local.sh` wraps the model in `sandbox-exec`
+  (macOS Seatbelt): `file-read-data` under `$HOME` is denied, re-allowed only for
+  `aichat-config/`, the tool build, `tools/`, caches, and the **per-task** roots
+  (the `-f` files + any `--read-root` dirs). So a web-capable model can't read
+  ambient files (`~/.ssh`, `~/.aws`, `~/Code` source) to exfiltrate them. The
+  runner refuses to run unconfined unless you pass `--no-sandbox`.
+- **Web egress is bounded.** `web_fetch` only reaches hosts on
+  `tools/fetch-allowlist.txt` (override: `OFFLOAD_FETCH_ALLOWLIST`); any URL that
+  resolves to a private/loopback/link-local address is refused, curl is pinned to
+  the validated IP (no DNS-rebinding), and redirects are not followed
+  (`tools/url_guard.py`). `web_search` (Tavily) needs `TAVILY_API_KEY`.
+- **Residual channels** (accepted): the search *query string* and the *prompt*
+  the orchestrator hands the model are still outbound paths — keep task prompts
+  free of secrets.
 - **Stateless.** The local model can't see the Claude conversation; the agent
   always sends a fully self-contained prompt.
 - **Failure is loud.** If `:8081` is down or output is empty, the agent reports
@@ -134,7 +158,10 @@ echo "summarize" | ./run-local.sh
   set changes (it reads `:8081/v1/models` and rewrites that block).
 - Change the default model: edit `model:` in `aichat-config/config.yaml` or pass
   `-m` to the wrapper.
-- Add tools: they must be read-only and listed in `use_tools:`; build them in
+- Add tools: they must be non-mutating and listed in `use_tools:`; build them in
   `~/llm-functions` (`argc build`). See **Prerequisites & first-time setup**.
+- Web allowlist: edit `tools/fetch-allowlist.txt` (host suffixes) or set
+  `OFFLOAD_FETCH_ALLOWLIST`. Never add private/loopback hosts — they're refused
+  anyway by `tools/url_guard.py`.
 - Requires a model server on `:8081` (see `./mlx-server.sh` and
   **Prerequisites & first-time setup**).
