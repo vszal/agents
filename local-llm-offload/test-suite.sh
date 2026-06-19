@@ -35,6 +35,9 @@ GUARD="$SCRIPT_DIR/tools/url_guard.py"
 FETCH="$SCRIPT_DIR/tools/web_fetch.sh"
 ALLOWLIST="$SCRIPT_DIR/tools/fetch-allowlist.txt"
 GUARD_TEST="$SCRIPT_DIR/tools/test-url-guard.sh"
+LAUNCH="$SCRIPT_DIR/mlx-server.sh"
+LIB="$SCRIPT_DIR/mlx-lib.sh"
+RUN_BATCH="$SCRIPT_DIR/run-batch.sh"
 INSTALLED="$HOME/.claude/agents/local-offload.md"
 SERVER="http://localhost:8081"
 
@@ -69,6 +72,21 @@ for f in "$POLICY" "$SRC" "$CFG" "$RUNNER" "$INSTALLER" "$GUARD" "$FETCH" "$ALLO
   [[ -f "$f" ]]; ok "exists: ${f#$SCRIPT_DIR/}" $?
 done
 [[ -d "$SCRIPT_DIR/sandbox" ]]; ok "exists: sandbox/" $?
+
+# =============================================================================
+section "1b. Alias registry is the single source of truth"
+bash -n "$LAUNCH"; ok "mlx-server.sh passes bash -n" $?
+bash -n "$LIB"; ok "mlx-lib.sh passes bash -n" $?
+bash -n "$RUN_BATCH"; ok "run-batch.sh passes bash -n" $?
+eq "--resolve gemma12 -> full id" "$(bash "$LAUNCH" --resolve gemma12)" "rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx"
+has "--list-aliases lists qwen14" "$(bash "$LAUNCH" --list-aliases)" "qwen14"
+bash "$LAUNCH" --resolve no-such-alias >/dev/null 2>&1; [[ $? -ne 0 ]]; ok "--resolve rejects unknown alias (nonzero)" $?
+eq "full id passes through --resolve" "$(bash "$LAUNCH" --resolve org/Model-4bit)" "org/Model-4bit"
+# the registry must live in exactly one file: no other tracked script may hardcode a known full id
+hits=$(grep -rln 'mlx-community/Qwen3-14B-4bit' "$SCRIPT_DIR" --include='*.sh' --include='*.py' 2>/dev/null | grep -v "$(basename "$LAUNCH")" | grep -v "$(basename "$0")")
+[[ -z "$hits" ]]; ok "no other script hardcodes a registry id" $? "${hits:+also in: $hits}"
+# the lib resolves via the launcher (delegates, not re-implements)
+has "mlx-lib.sh delegates resolution to --resolve" "$(cat "$LIB")" "--resolve"
 
 # =============================================================================
 section "2. Policy is valid & decisions are correct"

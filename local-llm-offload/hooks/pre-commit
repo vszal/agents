@@ -13,8 +13,12 @@
 #
 set -uo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-SUITE="$REPO_ROOT/test-suite.sh"
+# Resolve the suite relative to this hook (hooks/ sits beside test-suite.sh), not
+# via `git rev-parse --show-toplevel` — that returns the outer repo root when
+# local-llm-offload is vendored as a subdir, breaking the lookup. This works in
+# both the standalone clone and a nested checkout.
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SUITE="$HOOK_DIR/../test-suite.sh"
 
 [[ -x "$SUITE" ]] || { echo "pre-commit: test-suite.sh missing or not executable at $SUITE" >&2; exit 1; }
 

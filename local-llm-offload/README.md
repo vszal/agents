@@ -19,7 +19,9 @@ the local model via one of two clients — see **Two client paths** below.
 | `tools/fetch-allowlist.txt` | Host suffixes the model may `web_fetch` (override with `OFFLOAD_FETCH_ALLOWLIST`). |
 | `tools/test-url-guard.sh` | Offline unit tests for the SSRF/allowlist guard. |
 | `install.sh`              | Installs the agent into `~/.claude/agents` (or `--project`); also activates the git pre-commit hook. |
-| `mlx-server.sh`           | **Canonical** launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). Symlinked as `~/.local/bin/mlx-server.sh`; also used by the skill-eval scripts. Aliases incl. `gemma12` (default). |
+| `mlx-server.sh`           | **Canonical** launcher for the local model server on `:8081` (Apple Silicon / `mlx_lm`). Symlinked as `~/.local/bin/mlx-server.sh`. Holds the **single source of truth for model aliases** (`--resolve`/`--list-aliases`); also used by the batch runner and the skill-eval scripts. Aliases incl. `gemma12` (default). |
+| `mlx-lib.sh`              | Sourceable lifecycle helpers (`mlx_resolve`/`mlx_start`/`mlx_stop`/`mlx_wait_up`) extracted for reuse. Eval-agnostic. Symlinked as `~/.local/bin/mlx-lib.sh`. |
+| `run-batch.sh`            | Run one model over **many prompt files, sequentially** (single-GPU), managing the server's lifecycle. The generic batch tool; see **Batch a local model**. |
 | `sync-models.sh`          | Rewrites the `models:` block in `aichat-config/config.yaml` from the live server. |
 | `test-suite.sh`           | E2E / invariant tests that verify the gate is intact (see **Testing**). |
 | `hooks/pre-commit`        | Tracked git hook that runs the suite (`--no-live`) on every commit. |
@@ -126,6 +128,55 @@ talk only to `:8081`; the eval tooling (`run-eval-*.sh`) uses `post-local.py`.
 echo "summarize" | ./run-local.sh
 ```
 
+## Configure: models & aliases
+`mlx-server.sh` is the **single source of truth** for short alias → full model
+id. Every other tool (the batch runner, `mlx-lib.sh`, and any external consumer
+like the skill-eval scripts) resolves aliases through it instead of hardcoding
+ids — so when the served model set changes you edit **one** place.
+
+```bash
+./mlx-server.sh --list-aliases        # alias  full-id   (one per line)
+./mlx-server.sh --resolve gemma12     # -> rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx
+./mlx-server.sh --resolve org/Foo-4bit  # any value with '/' passes through unchanged
+```
+
+- **Add / change / remove a model:** edit the `alias_table` heredoc near the top
+  of `mlx-server.sh`. That's the only place ids live. (Per-model launch tweaks —
+  prompt-cache reservation, `enable_thinking` — are the two `case "$MODEL"`
+  blocks just below it.)
+- **Default model:** the first positional arg to `mlx-server.sh` (default
+  `gemma12`). For the offload *agent's* default, edit `model:` in
+  `aichat-config/config.yaml` (or pass `-m`).
+- **Reuse from your own scripts:** `source mlx-lib.sh` (or
+  `~/.local/bin/mlx-lib.sh`) to get `mlx_resolve`, `mlx_start <alias>`,
+  `mlx_wait_up <id-substr>`, and `mlx_stop` without re-implementing any of it.
+  `mlx-lib.sh` finds its sibling `mlx-server.sh` automatically (clone or symlink).
+
+## Batch a local model (`run-batch.sh`)
+Run **many prompt files through one model, in order**, with the server brought
+up and torn down for you. Because the single GPU forces sequential calls and the
+inputs share a leading prefix, the server's prompt cache makes repeat runs cheap
+(keep each input's variable part *late*). This is the generic, eval-agnostic
+batch pattern — domain-specific harnesses (e.g. skill evals) layer their own
+discovery/output on top of `mlx-lib.sh` rather than bending this tool.
+
+```bash
+./run-batch.sh qwen14 prompts/*.txt                       # answers to stdout
+./run-batch.sh -o out -p "Summarize in 3 bullets." gemma12 notes/*.md
+./run-batch.sh --keep-server gemma12 a.txt b.txt          # reuse a running :8081
+```
+
+| Option | Effect |
+|--------|--------|
+| `-o, --out-dir DIR` | Write `<input>.answer.md` per file into `DIR` (default: stdout). |
+| `-p, --prompt TEXT` | Instruction appended after each file's contents. |
+| `-m, --max-tokens N` / `-t, --temp T` | Forwarded to `post-local.py`. |
+| `--keep-server` | Use an already-running `:8081` as-is (skip stop/start). |
+
+By default it `mlx_stop` → `mlx_start <model>` → `mlx_wait_up` → POSTs each file
+via `post-local.py` → `mlx_stop` on exit (an `EXIT` trap, so the server is
+always cleaned up). Exit code is nonzero if any file failed.
+
 ## Safety / design notes
 - **Local only.** The offload config has no cloud client — it cannot spend
   cloud tokens.
@@ -153,6 +204,8 @@ echo "summarize" | ./run-local.sh
   it rather than silently doing the task in cloud Claude.
 
 ## Customize
+- Model aliases (add/remove/rename, default model): see **Configure: models &
+  aliases** above — they live only in `mlx-server.sh`'s `alias_table`.
 - Sync available models: the `models:` registry in `aichat-config/config.yaml` is
   generated from the live server — run `./sync-models.sh` after the served model
   set changes (it reads `:8081/v1/models` and rewrites that block).

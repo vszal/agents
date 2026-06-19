@@ -15,8 +15,15 @@
 #   ./mlx-server.sh phi4            # alias → mlx-community/phi-4-4bit
 #   ./mlx-server.sh mistral 8081    # alias + explicit port
 #   ./mlx-server.sh org/Model-4bit  # any full HF id (contains '/') used as-is
+#   ./mlx-server.sh --resolve qwen14   # print full id for an alias, then exit
+#   ./mlx-server.sh --list-aliases     # print the alias→id table, then exit
 #
 # Aliases: gemma12 (default), qwen14, qwencoder14, qwen4, qwen06, phi4, mistral, gemma27. '/' ⇒ full id.
+#
+# This file is the SINGLE SOURCE OF TRUTH for alias→id. Other tools must not
+# re-hardcode ids: mlx-lib.sh and the skill-eval scripts resolve aliases by
+# shelling out to `mlx-server.sh --resolve` / `--list-aliases` (via the
+# ~/.local/bin symlink). Keep `alias_table` below as the only place ids live.
 #
 # Model options by RAM (M4 Max 24 GB / 20 GB GPU wired limit):
 #
@@ -42,23 +49,48 @@
 #   forced swap, so the reservation now defaults small and PER-MODEL: 1GB for
 #   the 15GB gemma-27b (tight), 1.5GB otherwise. Override with PROMPT_CACHE_BYTES.
 
+# --- alias registry (single source of truth) ----------------------------
+# One "alias full-id" per line (whitespace-separated; neither field has spaces).
+# This is the ONLY place alias→id mappings live. Edit here when the served
+# model set changes; every other consumer reads it via resolve_alias /
+# `--resolve` / `--list-aliases`.
+alias_table() {
+  cat <<'EOF'
+gemma12 rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx
+qwen14 mlx-community/Qwen3-14B-4bit
+qwencoder14 mlx-community/Qwen2.5-Coder-14B-Instruct-4bit
+qwen4 mlx-community/Qwen3-4B-4bit
+qwen06 mlx-community/Qwen3-0.6B-4bit
+phi4 mlx-community/phi-4-4bit
+mistral mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit
+gemma27 mlx-community/gemma-3-text-27b-it-4bit
+EOF
+}
+
+# resolve_alias <alias|full-id> -> prints full HF id; nonzero if unknown.
+# A value containing '/' is treated as a full id and used verbatim.
+resolve_alias() {
+  case "$1" in */*) printf '%s\n' "$1"; return 0 ;; esac
+  local id
+  id=$(alias_table | awk -v a="$1" '$1==a{print $2; exit}')
+  [ -n "$id" ] && { printf '%s\n' "$id"; return 0; }
+  return 1
+}
+
+# --- query subcommands (print and exit; no server launch) ----------------
+case "${1:-}" in
+  --resolve)
+    resolve_alias "${2:?--resolve needs an alias}" \
+      || { echo "unknown model alias '${2}'" >&2; exit 2; }
+    exit 0 ;;
+  --list-aliases) alias_table; exit 0 ;;
+esac
+
 # --- args ---------------------------------------------------------------
 MODEL_ARG="${1:-gemma12}"
 PORT="${2:-8081}"
-
-# Resolve short aliases → full HF ids. A value containing '/' is used verbatim.
-case "$MODEL_ARG" in
-  */*)    MODEL="$MODEL_ARG" ;;
-  qwen14) MODEL="mlx-community/Qwen3-14B-4bit" ;;
-  qwencoder14) MODEL="mlx-community/Qwen2.5-Coder-14B-Instruct-4bit" ;;
-  qwen4)  MODEL="mlx-community/Qwen3-4B-4bit" ;;
-  qwen06) MODEL="mlx-community/Qwen3-0.6B-4bit" ;;
-  phi4)   MODEL="mlx-community/phi-4-4bit" ;;
-  mistral) MODEL="mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit" ;;
-  gemma27) MODEL="mlx-community/gemma-3-text-27b-it-4bit" ;;
-  gemma12) MODEL="rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx" ;;
-  *)      echo "unknown model alias '$MODEL_ARG' (use a full org/model id or a known alias)" >&2; exit 2 ;;
-esac
+MODEL=$(resolve_alias "$MODEL_ARG") \
+  || { echo "unknown model alias '$MODEL_ARG' (use a full org/model id or a known alias)" >&2; exit 2; }
 
 # Per-model prompt-cache reservation (bytes), overridable via env. Bigger
 # weights get a smaller reservation to stay under the ~20GB wired ceiling.
