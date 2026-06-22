@@ -12,7 +12,8 @@ the local model via one of two clients — see **Two client paths** below.
 | `post-local.py`           | **Simplified** direct-HTTP client (no `aichat`, no tools). Default for text-only tasks + all eval generation. |
 | `run-local.sh`            | Wrapper that sends a prompt to a local model via `aichat` (the **tool-calling** path), confining the model's file reads with `sandbox-exec`. Also usable by hand. |
 | `aichat-config/`          | Isolated `aichat` config used only by the wrapper. |
-| `aichat-config/config.yaml` | Local-only client; non-mutating tools (`fs_ls`, `fs_cat`, `web_search_tavily`, guarded `web_fetch`). |
+| `aichat-config/config.yaml` | Local-only client; non-mutating tools (`fs_ls`, `fs_cat`, `web_search_tavily`, guarded `web_fetch`, `load_skill`). |
+| `tools/load_skill.sh`     | Read-only tool: return an agent skill's `SKILL.md` by name (or list skills) from `OFFLOAD_SKILL_ROOTS`; name-sanitized against path traversal. |
 | `aichat-config/functions` | Symlink → `~/llm-functions` (the built tool set). |
 | `tools/url_guard.py`      | SSRF + allowlist guard for `web_fetch` (the security core; unit-tested). |
 | `tools/web_fetch.sh`      | Hardened single-URL fetch tool: allowlist + SSRF guard, pinned IP, no redirects. |
@@ -109,7 +110,7 @@ Pick the client by whether the local model needs **tools / function calling**:
 | Client | Deps | Tools? | Use for |
 |--------|------|--------|---------|
 | **`post-local.py`** | mlx-lm + Python stdlib only | none | **The default — fully self-contained.** Text-only, self-contained prompts: drafting, summarizing, eval generation. Plain HTTP to `:8081`; no `function_calling`, so no tool-call aborts, and it rides the server's prompt-cache prefix reuse (a shared leading prefix is prefilled once, then near-free). |
-| **`run-local.sh`** (aichat) | `aichat` + `llm-functions` tool build | `fs_ls`/`fs_cat` + guarded `web_search`/`web_fetch` | **When the local model needs tools** — read files itself mid-task, or search/fetch the web. Runs sandbox-confined via `aichat`'s isolated config. |
+| **`run-local.sh`** (aichat) | `aichat` + `llm-functions` tool build | `fs_ls`/`fs_cat` + guarded `web_search`/`web_fetch` + `load_skill` | **When the local model needs tools** — read files itself mid-task, search/fetch the web, or load an agent skill by name. Runs sandbox-confined via `aichat`'s isolated config. |
 
 **Rule of thumb: use `post-local.py` unless you need tool/function calling.**
 The simple path depends on nothing but the mlx-lm server you already run — no
@@ -180,10 +181,22 @@ always cleaned up). Exit code is nonzero if any file failed.
 ## Safety / design notes
 - **Local only.** The offload config has no cloud client — it cannot spend
   cloud tokens.
-- **Non-mutating tools.** The model gets `fs_ls`/`fs_cat` (read-only) plus
-  guarded web (`web_search_tavily`, `web_fetch`). Mutating fs tools and the
-  *unguarded* `fetch_url_via_*` tools are deliberately not enabled. Writes go
-  through the orchestrator (capability-request). To give file context, use `-f`.
+- **Non-mutating tools.** The model gets `fs_ls`/`fs_cat` (read-only), guarded web
+  (`web_search_tavily`, `web_fetch`), and `load_skill` (read a `SKILL.md` by name).
+  Mutating fs tools and the *unguarded* `fetch_url_via_*` tools are deliberately not
+  enabled. Writes go through the orchestrator (capability-request). To give file
+  context, use `-f`.
+- **Skills are loadable, read-only.** `load_skill` reads only from
+  `OFFLOAD_SKILL_ROOTS` (default `~/.claude/skills`, `~/.agents/skills`), which the
+  sandbox re-allows for reading; names are sanitized to a slug so `..`/path traversal
+  is refused. Skill text is treated as non-secret — keep secrets out of skill files.
+  Only the `run-local.sh` (aichat) path has tools; `post-local.py` has none.
+- **Per-workspace skills.** Pass `--skill-root <dir>` (repeatable) to scope a run to a
+  workspace's skills, e.g. `./run-local.sh --skill-root "$PWD/.claude/skills" "<task>"`.
+  Those dirs are prepended ahead of `OFFLOAD_SKILL_ROOTS` (a workspace skill shadows a
+  same-named user one) and added to the sandbox read-allow set automatically. Add
+  `--skill-root-only` to use **only** those dirs (no fall-through to the user defaults) —
+  for testing a skill in isolation. It requires at least one `--skill-root`.
 - **Reads are confined.** `run-local.sh` wraps the model in `sandbox-exec`
   (macOS Seatbelt): `file-read-data` under `$HOME` is denied, re-allowed only for
   `aichat-config/`, the tool build, `tools/`, caches, and the **per-task** roots

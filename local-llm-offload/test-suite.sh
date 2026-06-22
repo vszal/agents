@@ -33,6 +33,7 @@ RUNNER="$SCRIPT_DIR/run-local.sh"
 INSTALLER="$SCRIPT_DIR/install.sh"
 GUARD="$SCRIPT_DIR/tools/url_guard.py"
 FETCH="$SCRIPT_DIR/tools/web_fetch.sh"
+SKILL_TOOL="$SCRIPT_DIR/tools/load_skill.sh"
 ALLOWLIST="$SCRIPT_DIR/tools/fetch-allowlist.txt"
 GUARD_TEST="$SCRIPT_DIR/tools/test-url-guard.sh"
 LAUNCH="$SCRIPT_DIR/mlx-server.sh"
@@ -68,7 +69,7 @@ pj() { jq -r "$1" "$POLICY" 2>/dev/null; }   # policy query
 
 # =============================================================================
 section "1. Files present"
-for f in "$POLICY" "$SRC" "$CFG" "$RUNNER" "$INSTALLER" "$GUARD" "$FETCH" "$ALLOWLIST" "$GUARD_TEST"; do
+for f in "$POLICY" "$SRC" "$CFG" "$RUNNER" "$INSTALLER" "$GUARD" "$FETCH" "$ALLOWLIST" "$GUARD_TEST" "$SKILL_TOOL"; do
   [[ -f "$f" ]]; ok "exists: ${f#$SCRIPT_DIR/}" $?
 done
 [[ -d "$SCRIPT_DIR/sandbox" ]]; ok "exists: sandbox/" $?
@@ -128,7 +129,7 @@ grep -q 'capability-request' "$SRC"; ok "source documents capability-request pro
 # =============================================================================
 section "4. Isolated aichat config: fs-read + GUARDED web only"
 USE_TOOLS="$(grep -m1 '^use_tools:' "$CFG" | sed 's/^use_tools:[[:space:]]*//; s/#.*//; s/[[:space:]]*$//')"
-eq "use_tools = fs_ls,fs_cat,web_search_tavily,web_fetch" "$USE_TOOLS" "fs_ls,fs_cat,web_search_tavily,web_fetch"
+eq "use_tools = fs_ls,fs_cat,web_search_tavily,web_fetch,load_skill" "$USE_TOOLS" "fs_ls,fs_cat,web_search_tavily,web_fetch,load_skill"
 # mutating fs tools and UNguarded fetch tools must never be enabled here
 for forbidden in fs_write fs_rm fs_patch fs_mkdir fetch_url_via_curl fetch_url_via_jina execute_command; do
   nothas "use_tools omits $forbidden" "$USE_TOOLS" "$forbidden"
@@ -156,6 +157,26 @@ grep -q -- '--max-redirs 0' "$FETCH"; ok "web_fetch.sh forbids redirects (--max-
 nothas "web_fetch.sh does not follow redirects (no -L)" "$(grep -E 'curl ' "$FETCH")" "-fsSL"
 
 # =============================================================================
+section "5b. load_skill tool: read-only + path-traversal-safe"
+bash -n "$SKILL_TOOL"; ok "load_skill.sh passes bash -n" $?
+[[ -x "$SKILL_TOOL" ]] || chmod +x "$SKILL_TOOL" 2>/dev/null
+# It must sanitize the name to a bare slug and reject '..' traversal.
+has "load_skill.sh restricts names to a slug charset" "$(cat "$SKILL_TOOL")" 'A-Za-z0-9._-'
+has "load_skill.sh rejects '..' traversal" "$(cat "$SKILL_TOOL")" '== *..*'
+# It must be read-only: no mutation / fetch / shell-out to other tools.
+SKILL_BODY="$(grep -vE '^\s*#' "$SKILL_TOOL")"
+for forbidden in 'rm ' 'mv ' 'fs_write' 'fs_rm' 'curl ' 'wget ' 'web_fetch'; do
+  nothas "load_skill.sh does not '$forbidden'" "$SKILL_BODY" "$forbidden"
+done
+# Functional: an attempted traversal name is refused (needs argc to drive @option).
+if command -v argc >/dev/null 2>&1; then
+  T_OUT="$(OFFLOAD_SKILL_ROOTS=/tmp LLM_OUTPUT=/dev/stdout bash "$SKILL_TOOL" --name '../../etc/passwd' 2>&1 || true)"
+  has "load_skill refuses a traversal name (live)" "$T_OUT" "refused"
+else
+  skip "argc not installed — live load_skill name-guard test skipped"
+fi
+
+# =============================================================================
 section "6. Runner confines reads (sandbox-exec) & egress (allowlist)"
 bash -n "$RUNNER";    ok "run-local.sh passes bash -n" $?
 bash -n "$INSTALLER"; ok "install.sh passes bash -n" $?
@@ -165,6 +186,11 @@ grep -q 'localhost:8081' "$RUNNER"; ok "runner targets localhost:8081" $?
 grep -q 'sandbox-exec' "$RUNNER"; ok "runner wraps the model in sandbox-exec" $?
 grep -q 'deny file-read-data (subpath "\$HOME")' "$RUNNER"; ok "runner denies file-read-data under \$HOME" $?
 grep -q 'OFFLOAD_FETCH_ALLOWLIST' "$RUNNER"; ok "runner exports the fetch allowlist" $?
+grep -q 'OFFLOAD_SKILL_ROOTS' "$RUNNER"; ok "runner exports the skill roots for load_skill" $?
+grep -q 'load_skill tool may read' "$RUNNER"; ok "runner re-allows skill roots in the sandbox profile" $?
+grep -q -- '--skill-root)' "$RUNNER"; ok "runner accepts --skill-root for per-workspace scoping" $?
+grep -q -- '--skill-root-only' "$RUNNER"; ok "runner accepts --skill-root-only (isolated skills)" $?
+grep -q 'skill-root-only requires at least one' "$RUNNER"; ok "runner errors on --skill-root-only without --skill-root" $?
 # refuses to run unconfined unless --no-sandbox is explicit
 grep -q 'refusing to run a web-capable model unconfined' "$RUNNER"; ok "runner refuses unconfined run without --no-sandbox" $?
 # adversarial: runner itself must not reach any non-localhost http(s) endpoint

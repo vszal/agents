@@ -15,6 +15,13 @@
 #                        By default the model can read NOTHING outside the files you
 #                        pass with -f — the on-device model + its fs_ls/fs_cat tools
 #                        run inside a sandbox confined to the per-task paths.
+#       --skill-root DIR Scope load_skill to a workspace: search DIR for <slug>/SKILL.md
+#                        (repeatable). Prepended ahead of OFFLOAD_SKILL_ROOTS so a
+#                        workspace skill shadows a same-named user one, and the dir is
+#                        added to the sandbox read-allow set automatically.
+#       --skill-root-only  Use ONLY the --skill-root dirs (no fall-through to the user's
+#                        OFFLOAD_SKILL_ROOTS defaults). For testing a skill in isolation.
+#                        Requires at least one --skill-root.
 #   -s, --stream         Stream tokens to stdout as generated (default: buffered).
 #       --no-sandbox     Disable the read-confinement sandbox (debugging only;
 #                        prints a warning). Never use for untrusted/web-enabled runs.
@@ -23,8 +30,9 @@
 #
 # Notes:
 #   * Uses an ISOLATED aichat config (./aichat-config). The model now has, besides
-#     read-only fs (fs_ls, fs_cat): web_search (Tavily) and a HARDENED web_fetch
-#     (host allowlist + SSRF/private-IP guard — see tools/url_guard.py).
+#     read-only fs (fs_ls, fs_cat): web_search (Tavily), a HARDENED web_fetch
+#     (host allowlist + SSRF/private-IP guard — see tools/url_guard.py), and
+#     load_skill (read a SKILL.md by name from OFFLOAD_SKILL_ROOTS; read-only).
 #   * Web egress is bounded by tools/fetch-allowlist.txt (override with
 #     OFFLOAD_FETCH_ALLOWLIST). web_search needs TAVILY_API_KEY in the environment.
 #   * File-DATA reads are confined by macOS sandbox-exec to the per-task paths only,
@@ -42,6 +50,8 @@ SERVER="http://localhost:8081"
 MODEL=""   # empty => auto-resolve from the live server (see resolve_default_model)
 FILES=()
 READ_ROOTS=()
+SKILL_ROOTS=()   # per-workspace skill dirs from --skill-root; folded in after parsing
+SKILL_ROOT_ONLY=0 # 1 => use ONLY --skill-root dirs (no fall-through to env defaults)
 PROMPT=""
 STREAM=0      # 0 => --no-stream (buffered); 1 => stream tokens as they arrive
 SANDBOX=1     # 1 => confine file-data reads via sandbox-exec; 0 => --no-sandbox
@@ -51,6 +61,12 @@ if [[ -z "${OFFLOAD_FETCH_ALLOWLIST:-}" && -f "$SCRIPT_DIR/tools/fetch-allowlist
   OFFLOAD_FETCH_ALLOWLIST="$(grep -vE '^\s*(#|$)' "$SCRIPT_DIR/tools/fetch-allowlist.txt" | tr '\n' ' ')"
 fi
 export OFFLOAD_FETCH_ALLOWLIST="${OFFLOAD_FETCH_ALLOWLIST:-}"
+
+# Skill roots the load_skill tool may read (read-only skill TEXT). Env override
+# wins; default to the user's standard skill dirs. Per-workspace --skill-root dirs
+# are prepended after arg parsing (below). All get re-allowed in the sandbox
+# profile — without that the $HOME deny would make load_skill empty.
+export OFFLOAD_SKILL_ROOTS="${OFFLOAD_SKILL_ROOTS:-$HOME/.claude/skills $HOME/.agents/skills}"
 
 # Print the leading header comment block (skip shebang, stop at first code line).
 print_help() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0"; }
@@ -109,6 +125,14 @@ build_sandbox_profile() {
   (subpath "$HOME/.cache")
   (subpath "$HOME/Library/Caches"))
 EOF
+    # Skill roots (read-only): let the load_skill tool reach the skills it loads.
+    # Skill text is non-secret instruction content; keep secrets out of skills.
+    local sr srp
+    for sr in ${OFFLOAD_SKILL_ROOTS:-}; do
+      [[ -n "$sr" && -d "$sr" ]] || continue
+      srp="$(cd "$sr" 2>/dev/null && pwd || echo "$sr")"
+      printf '(allow file-read-data (subpath "%s"))\n' "$srp"
+    done
     # Per-task read roots (TIGHTEST): explicit --read-root dirs are browsable;
     # each -f FILE is allowed as a single literal (not its whole directory).
     local r rp
@@ -131,6 +155,8 @@ while [[ $# -gt 0 ]]; do
     -m|--model)    MODEL="$2"; shift 2 ;;
     -f|--file)     FILES+=("$2"); shift 2 ;;
     --read-root)   READ_ROOTS+=("$2"); shift 2 ;;
+    --skill-root)  SKILL_ROOTS+=("$2"); shift 2 ;;
+    --skill-root-only) SKILL_ROOT_ONLY=1; shift ;;
     -s|--stream)   STREAM=1; shift ;;
     --no-sandbox)  SANDBOX=0; shift ;;
     -l|--list)     check_server; curl -s "$SERVER/v1/models" | jq -r '.data[].id'; exit 0 ;;
@@ -140,6 +166,18 @@ while [[ $# -gt 0 ]]; do
     *)             PROMPT="${PROMPT:+$PROMPT }$1"; shift ;;
   esac
 done
+
+# Per-workspace skill roots (--skill-root): with --skill-root-only, use ONLY those
+# (isolated skill testing — no fall-through to the user defaults); otherwise prepend
+# them so workspace skills shadow same-named user ones. Either way build_sandbox_profile
+# re-allows whatever OFFLOAD_SKILL_ROOTS ends up holding.
+if [[ "$SKILL_ROOT_ONLY" -eq 1 ]]; then
+  [[ "${#SKILL_ROOTS[@]}" -gt 0 ]] || {
+    echo "error: --skill-root-only requires at least one --skill-root DIR" >&2; exit 2; }
+  export OFFLOAD_SKILL_ROOTS="${SKILL_ROOTS[*]}"
+elif [[ "${#SKILL_ROOTS[@]}" -gt 0 ]]; then
+  export OFFLOAD_SKILL_ROOTS="${SKILL_ROOTS[*]} $OFFLOAD_SKILL_ROOTS"
+fi
 
 # Allow the prompt to arrive on stdin (e.g. piped from another command).
 if [[ -z "$PROMPT" && ! -t 0 ]]; then PROMPT="$(cat)"; fi

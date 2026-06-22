@@ -6,6 +6,9 @@
 #   * web_search_tavily   — web search (needs TAVILY_API_KEY in the environment).
 #   * web_fetch           — fetch ONE allowlisted URL; SSRF/private-IP guarded
 #                           (see ../tools/web_fetch.sh + ../tools/url_guard.py).
+#   * load_skill          — read a SKILL.md by name (or list skills) from the
+#                           OFFLOAD_SKILL_ROOTS dirs; read-only, name-sanitized
+#                           (see ../tools/load_skill.sh).
 # File-DATA reads are additionally confined to the per-task paths by sandbox-exec
 # in run-local.sh, so a web-capable model cannot read ambient files and exfil
 # them. Do NOT add fetch_url_via_curl/jina here — those are UNguarded arbitrary
@@ -17,7 +20,7 @@ model: mlx:mlx-community/Qwen3-14B-4bit
 stream: false
 save: false
 function_calling: true
-use_tools: fs_ls,fs_cat,web_search_tavily,web_fetch   # read-only fs + guarded web; never fs_write/fs_rm/fs_patch or unguarded fetch_url_*
+use_tools: fs_ls,fs_cat,web_search_tavily,web_fetch,load_skill   # read-only fs + guarded web + skill loader; never fs_write/fs_rm/fs_patch or unguarded fetch_url_*
 
 # The `models:` list below is GENERATED from the live server by sync-models.sh.
 # Don't hand-edit it — run ./sync-models.sh after the served model set changes.

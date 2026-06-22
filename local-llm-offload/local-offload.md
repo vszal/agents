@@ -50,9 +50,24 @@ you do NOT mediate those:
   targets are refused (`tools/url_guard.py`). If a task needs a host that isn't on the
   list, tell the user to add it — don't try to route around the guard.
 
-The model's file READS are confined by `sandbox-exec` to the per-task paths only (the
-`-f` files and any `--read-root` dirs), so a web-capable model can't read ambient files
-to exfiltrate them. Keep task prompts free of secrets (the prompt is the other channel).
+The model also has **`load_skill`** — a read-only tool that returns an agent skill's
+`SKILL.md` by name (or lists available skills when called with no name), read from the
+`OFFLOAD_SKILL_ROOTS` dirs (`~/.claude/skills`, `~/.agents/skills` by default). Use it
+when a task says to follow a named skill: the model can call `load_skill` to pull the
+instructions itself instead of you inlining them. Names are sanitized to a slug, so
+traversal paths are refused.
+
+To scope skills to a **workspace**, pass `--skill-root <dir>` to the runner (repeatable),
+e.g. `__RUNNER__ --skill-root "$PWD/.claude/skills" -m <model> "<task>"`. Those dirs are
+searched first (a workspace skill shadows a same-named user one) and are added to the
+sandbox read set automatically. Add `--skill-root-only` to use ONLY the `--skill-root`
+dirs with no fall-through to the user defaults — the right choice when testing a skill in
+isolation so nothing from `~/.claude/skills` leaks in.
+
+The model's file READS are confined by `sandbox-exec` to the per-task paths plus the
+skill roots, so a web-capable model can't read ambient files to exfiltrate them. Keep
+task prompts free of secrets (the prompt is the other channel), and keep secrets out of
+skill files (they're loadable by the model).
 
 **Writes are still mediated** — the worker has no write/bash tool. When a task needs to
 write a file, have the model end its output with a fenced `capability-request` block
