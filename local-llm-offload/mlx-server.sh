@@ -13,12 +13,12 @@
 # Usage:
 #   ./mlx-server.sh                 # default model (gemma12 / gemma-4-12b) on :8081
 #   ./mlx-server.sh phi4            # alias → mlx-community/phi-4-4bit
-#   ./mlx-server.sh mistral 8081    # alias + explicit port
+#   ./mlx-server.sh gemma27 8081    # alias + explicit port
 #   ./mlx-server.sh org/Model-4bit  # any full HF id (contains '/') used as-is
 #   ./mlx-server.sh --resolve qwen14   # print full id for an alias, then exit
 #   ./mlx-server.sh --list-aliases     # print the alias→id table, then exit
 #
-# Aliases: gemma12 (default), qwen14, qwencoder14, qwen4, qwen06, phi4, mistral, gemma27. '/' ⇒ full id.
+# Aliases: gemma12 (default), qwen14, qwencoder14, qwen4i, qwen06, phi4, gemma27. '/' ⇒ full id.
 #
 # This file is the SINGLE SOURCE OF TRUTH for alias→id. Other tools must not
 # re-hardcode ids: mlx-lib.sh and the skill-eval scripts resolve aliases by
@@ -27,15 +27,16 @@
 #
 # Model options by RAM (M4 Max 24 GB / 20 GB GPU wired limit):
 #
-#   MODEL               SIZE    DECODE      NOTES
-#   Qwen3-4B-4bit       ~2.3GB  ~178 tok/s  Recommended — fast, capable
-#   Qwen3-8B-4bit       ~4.5GB  ~91 tok/s   Slower prefill, better quality
-#   Qwen3-14B-4bit      ~7.9GB  ~135 tok/s  Best Qwen quality; supports tools
-#   phi-4-4bit          ~7.7GB  ~185 tok/s  Diverse (non-Qwen) lineage, fastest
-#   Mistral-Small-3.2   ~13GB   ~110 tok/s  24B dense; ~16GB peak wired
-#   gemma-3-text-27b    ~15GB   —           27B; sliding-window attn keeps KV
-#                                           small (~1GB), but needs 1GB cache.
-#                                           This is the LARGEST that fits 24GB.
+#   MODEL                    SIZE   DECODE      NOTES
+#   Qwen3-4B-Instruct-2507   ~2.1GB ~178 tok/s  qwen4i — fast, strict format; cheap first-pass
+#   Qwen3-8B-4bit            ~4.5GB ~91 tok/s   Slower prefill, better quality
+#   Qwen3-14B-4bit           ~7.9GB ~135 tok/s  qwen14 — best dense Qwen; supports tools
+#   phi-4-4bit               ~7.7GB ~185 tok/s  Diverse (non-Qwen) lineage, fastest
+#   gemma-3-text-27b         ~15GB  —           gemma27 — 27B; sliding-window attn keeps KV
+#                                               small (~1GB), but needs 1GB cache.
+#                                               LARGEST that fits 24GB. (A dense Qwen3-30B-A3B
+#                                               MoE was tried + dropped: at the RAM ceiling,
+#                                               unbounded KV — same crash risk as Qwen3-32B.)
 # DO NOT add Qwen3-32B-4bit (~18GB weights): it crashed the machine — wired
 # peaked ~22.6GB (GQA KV has no sliding-window bound), exceeding the 24GB unit.
 #  (decode rates above are PREFILL tok/s on an ~8.5K-token input, slim cache.)
@@ -59,10 +60,9 @@ alias_table() {
 gemma12 rajaschitnis/gemma-4-12b-it-text-only-4bit-mlx
 qwen14 mlx-community/Qwen3-14B-4bit
 qwencoder14 mlx-community/Qwen2.5-Coder-14B-Instruct-4bit
-qwen4 mlx-community/Qwen3-4B-4bit
+qwen4i mlx-community/Qwen3-4B-Instruct-2507-4bit
 qwen06 mlx-community/Qwen3-0.6B-4bit
 phi4 mlx-community/phi-4-4bit
-mistral mlx-community/Mistral-Small-3.2-24B-Instruct-2506-4bit
 gemma27 mlx-community/gemma-3-text-27b-it-4bit
 EOF
 }
@@ -105,6 +105,7 @@ PROMPT_CACHE_BYTES="${PROMPT_CACHE_BYTES:-$DEFAULT_CACHE_BYTES}"
 # don't reference it; passing it would be rejected, so only set it for these two.
 EXTRA_ARGS=()
 case "$MODEL" in
+  *Instruct-2507*)       : ;;  # 2507 Instruct variants dropped the thinking toggle; kwarg would be rejected
   *Qwen3*|*gemma-4-12b*) EXTRA_ARGS+=(--chat-template-args '{"enable_thinking":false}') ;;
 esac
 
